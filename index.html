@@ -1,0 +1,2031 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Kanban 个人项目管理</title>
+  <!-- 引入外部资源 -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link href="https://cdn.jsdelivr.net/npm/font-awesome@4.7.0/css/font-awesome.min.css" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.8/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.0/Sortable.min.js"></script>
+  
+  <!-- 配置Tailwind自定义主题 -->
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            primary: '#165DFF',
+            secondary: '#36CFC9',
+            success: '#52C41A',
+            warning: '#FAAD14',
+            danger: '#FF4D4F',
+            info: '#1890FF',
+            dark: '#1D2129',
+            light: '#F2F3F5'
+          },
+          fontFamily: {
+            inter: ['Inter', 'system-ui', 'sans-serif'],
+          },
+        },
+      }
+    }
+  </script>
+  
+  <!-- 自定义工具类 -->
+  <style type="text/tailwindcss">
+    @layer utilities {
+      .content-auto {
+        content-visibility: auto;
+      }
+      .scrollbar-hide {
+        -ms-overflow-style: none;
+        scrollbar-width: none;
+      }
+      .scrollbar-hide::-webkit-scrollbar {
+        display: none;
+      }
+      .task-shadow {
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+      }
+      .list-shadow {
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+      }
+      .transition-bg {
+        transition: background-color 0.2s ease;
+      }
+      .transition-all-custom {
+        transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+      }
+    }
+  </style>
+  
+  <style>
+    /* 全局样式 */
+    body {
+      font-family: 'Inter', system-ui, sans-serif;
+      overflow: hidden;
+    }
+    
+    /* 拖拽相关样式 */
+    .dragging {
+      opacity: 0.7;
+      transform: scale(1.02);
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    }
+    
+    .drag-over {
+      background-color: rgba(22, 93, 255, 0.05);
+    }
+    
+    /* 甘特图样式 */
+    .gantt-task {
+      height: 30px;
+      border-radius: 4px;
+      position: absolute;
+      display: flex;
+      align-items: center;
+      padding: 0 8px;
+      color: white;
+      font-size: 12px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    
+    /* 动画效果 */
+    @keyframes fadeIn {
+      from { opacity: 0; }
+      to { opacity: 1; }
+    }
+    
+    .animate-fadeIn {
+      animation: fadeIn 0.3s ease forwards;
+    }
+    
+    /* 自定义滚动条 */
+    .custom-scrollbar::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+    
+    .custom-scrollbar::-webkit-scrollbar-track {
+      background: #f1f1f1;
+      border-radius: 3px;
+    }
+    
+    .custom-scrollbar::-webkit-scrollbar-thumb {
+      background: #c1c1c1;
+      border-radius: 3px;
+    }
+    
+    .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+      background: #a8a8a8;
+    }
+  </style>
+</head>
+
+<body class="bg-gray-50 text-dark">
+  <div class="flex h-screen overflow-hidden">
+    <!-- 侧边栏 - 项目列表 -->
+    <aside id="sidebar" class="w-64 bg-white border-r border-gray-200 flex flex-col h-full transition-all duration-300 ease-in-out">
+      <!-- 侧边栏头部 -->
+      <div class="p-4 border-b border-gray-200 flex justify-between items-center">
+        <h1 class="text-xl font-bold text-primary flex items-center">
+          <i class="fa fa-tasks mr-2"></i>
+          <span>项目管理</span>
+        </h1>
+        <button id="toggle-sidebar" class="lg:hidden text-gray-500 hover:text-primary">
+          <i class="fa fa-chevron-left"></i>
+        </button>
+      </div>
+      
+      <!-- 所有项目概览 -->
+      <div class="p-4 border-b border-gray-200">
+        <h2 class="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-3">项目概览</h2>
+        <div class="bg-gray-50 rounded-lg p-3">
+          <div class="flex justify-between items-center mb-2">
+            <span class="text-sm">总任务数</span>
+            <span id="total-tasks" class="text-sm font-medium">0</span>
+          </div>
+          <div class="flex justify-between items-center mb-2">
+            <span class="text-sm">已完成</span>
+            <span id="completed-tasks" class="text-sm font-medium text-success">0</span>
+          </div>
+          <div class="flex justify-between items-center">
+            <span class="text-sm">进行中</span>
+            <span id="in-progress-tasks" class="text-sm font-medium text-warning">0</span>
+          </div>
+        </div>
+      </div>
+      
+      <!-- 项目列表 -->
+      <div class="flex-1 overflow-y-auto custom-scrollbar">
+        <div class="p-4">
+          <div class="flex justify-between items-center mb-3">
+            <h2 class="text-sm font-semibold text-gray-500 uppercase tracking-wider">我的项目</h2>
+            <button id="add-project-btn" class="text-primary hover:text-primary/80 text-sm">
+              <i class="fa fa-plus"></i>
+            </button>
+          </div>
+          
+          <ul id="projects-list" class="space-y-1">
+            <!-- 项目列表项将通过JS动态生成 -->
+          </ul>
+        </div>
+      </div>
+      
+      <!-- 侧边栏底部 -->
+      <div class="p-4 border-t border-gray-200">
+        <div class="flex items-center">
+          <img src="https://picsum.photos/id/1005/40/40" alt="用户头像" class="w-8 h-8 rounded-full mr-3">
+          <div>
+            <p class="text-sm font-medium">用户名</p>
+            <p class="text-xs text-gray-500">个人项目</p>
+          </div>
+        </div>
+      </div>
+    </aside>
+    
+    <!-- 主内容区 -->
+    <main class="flex-1 flex flex-col overflow-hidden">
+      <!-- 顶部导航栏 -->
+      <header class="bg-white border-b border-gray-200 p-4 flex justify-between items-center">
+        <div class="flex items-center">
+          <button id="show-sidebar" class="lg:hidden mr-3 text-gray-500 hover:text-primary">
+            <i class="fa fa-bars"></i>
+          </button>
+          <h2 id="current-project-title" class="text-xl font-semibold">请选择一个项目</h2>
+        </div>
+        
+        <div class="flex items-center space-x-4">
+          <button class="text-gray-500 hover:text-primary transition-colors">
+            <i class="fa fa-search text-lg"></i>
+          </button>
+          <button class="text-gray-500 hover:text-primary transition-colors">
+            <i class="fa fa-bell text-lg"></i>
+          </button>
+          <button id="settings-btn" class="text-gray-500 hover:text-primary transition-colors">
+            <i class="fa fa-cog text-lg"></i>
+          </button>
+        </div>
+      </header>
+      
+      <!-- 项目内容区 -->
+      <div id="project-content" class="flex-1 overflow-hidden hidden">
+        <!-- 选项卡导航 -->
+        <div class="border-b border-gray-200 bg-white">
+          <div class="flex">
+            <button class="tab-btn active px-6 py-3 font-medium text-primary border-b-2 border-primary" data-tab="dashboard">
+              <i class="fa fa-dashboard mr-2"></i>仪表板
+            </button>
+            <button class="tab-btn px-6 py-3 font-medium text-gray-500 hover:text-primary transition-colors" data-tab="tasks">
+              <i class="fa fa-list mr-2"></i>任务详情
+            </button>
+            <button class="tab-btn px-6 py-3 font-medium text-gray-500 hover:text-primary transition-colors" data-tab="gantt">
+              <i class="fa fa-timeline mr-2"></i>甘特图
+            </button>
+          </div>
+        </div>
+        
+        <!-- 仪表板内容 -->
+        <div id="dashboard-tab" class="tab-content p-6 overflow-y-auto h-[calc(100%-56px)] custom-scrollbar">
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
+            <!-- 统计卡片 -->
+            <div class="bg-white rounded-xl shadow-sm p-5 border border-gray-100">
+              <div class="flex justify-between items-start">
+                <div>
+                  <p class="text-gray-500 text-sm">总任务数</p>
+                  <h3 id="dashboard-total-tasks" class="text-3xl font-bold mt-1">0</h3>
+                </div>
+                <div class="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center text-primary">
+                  <i class="fa fa-tasks"></i>
+                </div>
+              </div>
+              <div class="mt-4 text-xs text-gray-500">
+                <span class="text-success"><i class="fa fa-arrow-up"></i> 12%</span> 较上周
+              </div>
+            </div>
+            
+            <div class="bg-white rounded-xl shadow-sm p-5 border border-gray-100">
+              <div class="flex justify-between items-start">
+                <div>
+                  <p class="text-gray-500 text-sm">已完成</p>
+                  <h3 id="dashboard-completed-tasks" class="text-3xl font-bold mt-1 text-success">0</h3>
+                </div>
+                <div class="w-10 h-10 rounded-full bg-success/10 flex items-center justify-center text-success">
+                  <i class="fa fa-check"></i>
+                </div>
+              </div>
+              <div class="mt-4 text-xs text-gray-500">
+                <span class="text-success"><i class="fa fa-arrow-up"></i> 8%</span> 较上周
+              </div>
+            </div>
+            
+            <div class="bg-white rounded-xl shadow-sm p-5 border border-gray-100">
+              <div class="flex justify-between items-start">
+                <div>
+                  <p class="text-gray-500 text-sm">逾期任务</p>
+                  <h3 id="dashboard-overdue-tasks" class="text-3xl font-bold mt-1 text-danger">0</h3>
+                </div>
+                <div class="w-10 h-10 rounded-full bg-danger/10 flex items-center justify-center text-danger">
+                  <i class="fa fa-exclamation-triangle"></i>
+                </div>
+              </div>
+              <div class="mt-4 text-xs text-gray-500">
+                <span class="text-danger"><i class="fa fa-arrow-up"></i> 5%</span> 较上周
+              </div>
+            </div>
+          </div>
+          
+          <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <!-- 任务状态饼图 -->
+            <div class="bg-white rounded-xl shadow-sm p-5 border border-gray-100">
+              <h3 class="text-lg font-semibold mb-4">任务状态分布</h3>
+              <div class="h-64">
+                <canvas id="task-status-chart"></canvas>
+              </div>
+            </div>
+            
+            <!-- 优先级分布 -->
+            <div class="bg-white rounded-xl shadow-sm p-5 border border-gray-100">
+              <h3 class="text-lg font-semibold mb-4">任务优先级分布</h3>
+              <div class="h-64">
+                <canvas id="priority-chart"></canvas>
+              </div>
+            </div>
+            
+            <!-- 近期任务 -->
+            <div class="bg-white rounded-xl shadow-sm p-5 border border-gray-100 lg:col-span-2">
+              <div class="flex justify-between items-center mb-4">
+                <h3 class="text-lg font-semibold">近期截止任务</h3>
+                <button class="text-primary text-sm hover:underline">查看全部</button>
+              </div>
+              <div class="overflow-x-auto">
+                <table class="min-w-full">
+                  <thead>
+                    <tr class="border-b border-gray-200">
+                      <th class="py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">任务名称</th>
+                      <th class="py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">状态</th>
+                      <th class="py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">优先级</th>
+                      <th class="py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">截止时间</th>
+                    </tr>
+                  </thead>
+                  <tbody id="upcoming-tasks-table">
+                    <!-- 近期任务将通过JS动态生成 -->
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+        
+        <!-- 任务详情内容 (Kanban模式) -->
+        <div id="tasks-tab" class="tab-content hidden h-[calc(100%-56px)] overflow-hidden">
+          <!-- 任务工具栏 -->
+          <div class="bg-white border-b border-gray-200 p-3 flex justify-between items-center">
+            <div class="flex items-center space-x-2">
+              <button id="add-list-btn" class="bg-primary text-white px-4 py-2 rounded-lg text-sm hover:bg-primary/90 transition-colors flex items-center">
+                <i class="fa fa-plus mr-1"></i> 添加列表
+              </button>
+              <button id="task-settings-btn" class="text-gray-500 hover:text-primary px-3 py-2 rounded-lg text-sm transition-colors">
+                <i class="fa fa-cog mr-1"></i> 设置
+              </button>
+            </div>
+            <div class="flex items-center space-x-2">
+              <div class="relative">
+                <select id="list-sort-select" class="appearance-none bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 pr-8 text-sm focus:outline-none focus:ring-2 focus:ring-primary/30">
+                  <option value="createdAt">按创建时间排序</option>
+                  <option value="startDate">按开始时间排序</option>
+                  <option value="dueDate">按截止时间排序</option>
+                  <option value="priority">按优先级排序</option>
+                </select>
+                <div class="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-gray-500">
+                  <i class="fa fa-chevron-down text-xs"></i>
+                </div>
+              </div>
+            </div>
+          </div>
+          
+          <!-- Kanban 看板区域 -->
+          <div id="kanban-container" class="flex h-[calc(100%-56px)] overflow-x-auto p-4 space-x-4 custom-scrollbar">
+            <!-- Kanban列表将通过JS动态生成 -->
+          </div>
+        </div>
+        
+        <!-- 甘特图内容 -->
+        <div id="gantt-tab" class="tab-content hidden p-6 h-[calc(100%-56px)] overflow-y-auto custom-scrollbar">
+          <div class="bg-white rounded-xl shadow-sm p-5 border border-gray-100 mb-6">
+            <h3 class="text-lg font-semibold mb-4">项目任务甘特图</h3>
+            <div class="flex items-center mb-4">
+              <button id="zoom-in-gantt" class="p-2 border border-gray-200 rounded hover:bg-gray-50 transition-colors mr-2">
+                <i class="fa fa-search-plus"></i>
+              </button>
+              <button id="zoom-out-gantt" class="p-2 border border-gray-200 rounded hover:bg-gray-50 transition-colors mr-2">
+                <i class="fa fa-search-minus"></i>
+              </button>
+              <button id="fit-gantt" class="p-2 border border-gray-200 rounded hover:bg-gray-50 transition-colors">
+                <i class="fa fa-arrows-alt"></i> 适应视图
+              </button>
+            </div>
+            <div id="gantt-container" class="border border-gray-200 rounded-lg overflow-hidden">
+              <!-- 甘特图头部 - 日期 -->
+              <div id="gantt-header" class="bg-gray-50 border-b border-gray-200 h-8 flex">
+                <!-- 甘特图日期头部将通过JS动态生成 -->
+              </div>
+              
+              <!-- 甘特图主体 -->
+              <div id="gantt-body" class="min-h-[500px] relative">
+                <!-- 甘特图任务将通过JS动态生成 -->
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      
+      <!-- 无项目选中时显示 -->
+      <div id="no-project-selected" class="flex-1 flex flex-col items-center justify-center p-6 text-center">
+        <div class="w-24 h-24 rounded-full bg-primary/10 flex items-center justify-center text-primary mb-6">
+          <i class="fa fa-folder-open text-4xl"></i>
+        </div>
+        <h3 class="text-xl font-semibold mb-2">没有选中项目</h3>
+        <p class="text-gray-500 mb-6 max-w-md">请从左侧列表中选择一个项目，或者创建一个新的项目开始管理你的任务</p>
+        <button id="create-first-project" class="bg-primary text-white px-6 py-3 rounded-lg hover:bg-primary/90 transition-colors">
+          创建第一个项目
+        </button>
+      </div>
+    </main>
+  </div>
+  
+  <!-- 新建项目模态框 -->
+  <div id="new-project-modal" class="fixed inset-0 bg-black/50 flex items-center justify-center z-50 hidden">
+    <div class="bg-white rounded-xl p-6 w-full max-w-md animate-fadeIn">
+      <div class="flex justify-between items-center mb-4">
+        <h3 class="text-xl font-semibold">创建新项目</h3>
+        <button class="modal-close text-gray-500 hover:text-gray-700">
+          <i class="fa fa-times"></i>
+        </button>
+      </div>
+      <form id="new-project-form">
+        <div class="mb-4">
+          <label for="project-name" class="block text-sm font-medium text-gray-700 mb-1">项目名称</label>
+          <input type="text" id="project-name" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary/30 focus:border-primary outline-none transition-colors" placeholder="输入项目名称" required>
+        </div>
+        <div class="mb-6">
+          <label for="project-description" class="block text-sm font-medium text-gray-700 mb-1">项目描述 (可选)</label>
+          <textarea id="project-description" rows="3" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary/30 focus:border-primary outline-none transition-colors" placeholder="输入项目描述"></textarea>
+        </div>
+        <div class="flex justify-end">
+          <button type="button" class="modal-close px-4 py-2 border border-gray-300 rounded-lg mr-2 hover:bg-gray-50 transition-colors">取消</button>
+          <button type="submit" class="px-4 py-2 bg-primary text-white rounded-lg hover:bg-primary/90 transition-colors">创建</button>
+        </div>
+      </form>
+    </div>
+  </div>
+  
+  <!-- 新建列表模态框 -->
+  <div id="new-list-modal" class="fixed inset-0 bg-black/50 flex items-center justify-center z-50 hidden">
+    <div class="bg-white rounded-xl p-6 w-full max-w-md animate-fadeIn">
+      <div class="flex justify-between items-center mb-4">
+        <h3 class="text-xl font-semibold">创建新列表</h3>
+        <button class="modal-close text-gray-500 hover:text-gray-700">
+          <i class="fa fa-times"></i>
+        </button>
+      </div>
+      <form id="new-list-form">
+        <div class="mb-4">
+          <label for="list-name" class="block text-sm font-medium text-gray-700 mb-1">列表名称</label>
+          <input type="text" id="list-name" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary/30 focus:border-primary outline-none transition-colors" placeholder="输入列表名称" required>
+        </div>
+        <div class="mb-6">
+          <label class="block text-sm font-medium text-gray-700 mb-1">列表背景色</label>
+          <div class="grid grid-cols-6 gap-2">
+            <button type="button" class="list-color-btn w-full h-8 rounded-full bg-blue-50 border-2 border-transparent hover:scale-110 transition-transform" data-color="bg-blue-50"></button>
+            <button type="button" class="list-color-btn w-full h-8 rounded-full bg-green-50 border-2 border-transparent hover:scale-110 transition-transform" data-color="bg-green-50"></button>
+            <button type="button" class="list-color-btn w-full h-8 rounded-full bg-yellow-50 border-2 border-transparent hover:scale-110 transition-transform" data-color="bg-yellow-50"></button>
+            <button type="button" class="list-color-btn w-full h-8 rounded-full bg-red-50 border-2 border-transparent hover:scale-110 transition-transform" data-color="bg-red-50"></button>
+            <button type="button" class="list-color-btn w-full h-8 rounded-full bg-purple-50 border-2 border-transparent hover:scale-110 transition-transform" data-color="bg-purple-50"></button>
+            <button type="button" class="list-color-btn w-full h-8 rounded-full bg-gray-50 border-2 border-transparent hover:scale-110 transition-transform" data-color="bg-gray-50"></button>
+          </div>
+          <input type="hidden" id="list-color" value="bg-blue-50">
+        </div>
+        <div class="flex justify-end">
+          <button type="button" class="modal-close px-4 py-2 border border-gray-300 rounded-lg mr-2 hover:bg-gray-50 transition-colors">取消</button>
+          <button type="submit" class="px-4 py-2 bg-primary text-white rounded-lg hover:bg-primary/90 transition-colors">创建</button>
+        </div>
+      </form>
+    </div>
+  </div>
+  
+  <!-- 新建任务模态框 -->
+  <div id="new-task-modal" class="fixed inset-0 bg-black/50 flex items-center justify-center z-50 hidden">
+    <div class="bg-white rounded-xl p-6 w-full max-w-md animate-fadeIn">
+      <div class="flex justify-between items-center mb-4">
+        <h3 class="text-xl font-semibold">创建新任务</h3>
+        <button class="modal-close text-gray-500 hover:text-gray-700">
+          <i class="fa fa-times"></i>
+        </button>
+      </div>
+      <form id="new-task-form">
+        <input type="hidden" id="task-list-id">
+        
+        <div class="mb-4">
+          <label for="task-title" class="block text-sm font-medium text-gray-700 mb-1">任务名称</label>
+          <input type="text" id="task-title" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary/30 focus:border-primary outline-none transition-colors" placeholder="输入任务名称" required>
+        </div>
+        
+        <div class="mb-4">
+          <label for="task-description" class="block text-sm font-medium text-gray-700 mb-1">任务描述 (可选)</label>
+          <textarea id="task-description" rows="3" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary/30 focus:border-primary outline-none transition-colors" placeholder="输入任务描述"></textarea>
+        </div>
+        
+        <div class="grid grid-cols-2 gap-4 mb-4">
+          <div>
+            <label for="task-start-date" class="block text-sm font-medium text-gray-700 mb-1">开始时间</label>
+            <input type="datetime-local" id="task-start-date" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary/30 focus:border-primary outline-none transition-colors">
+          </div>
+          <div>
+            <label for="task-due-date" class="block text-sm font-medium text-gray-700 mb-1">截止时间</label>
+            <input type="datetime-local" id="task-due-date" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary/30 focus:border-primary outline-none transition-colors">
+          </div>
+        </div>
+        
+        <div class="mb-6">
+          <label class="block text-sm font-medium text-gray-700 mb-1">优先级</label>
+          <div class="flex space-x-2">
+            <label class="flex items-center p-2 border border-gray-200 rounded-lg cursor-pointer hover:bg-gray-50 transition-colors">
+              <input type="radio" name="priority" value="low" class="mr-2" checked>
+              <span>低</span>
+            </label>
+            <label class="flex items-center p-2 border border-gray-200 rounded-lg cursor-pointer hover:bg-gray-50 transition-colors">
+              <input type="radio" name="priority" value="medium" class="mr-2">
+              <span>中</span>
+            </label>
+            <label class="flex items-center p-2 border border-gray-200 rounded-lg cursor-pointer hover:bg-gray-50 transition-colors">
+              <input type="radio" name="priority" value="high" class="mr-2">
+              <span>高</span>
+            </label>
+            <label class="flex items-center p-2 border border-gray-200 rounded-lg cursor-pointer hover:bg-gray-50 transition-colors">
+              <input type="radio" name="priority" value="urgent" class="mr-2">
+              <span>紧急</span>
+            </label>
+          </div>
+        </div>
+        
+        <div class="flex justify-end">
+          <button type="button" class="modal-close px-4 py-2 border border-gray-300 rounded-lg mr-2 hover:bg-gray-50 transition-colors">取消</button>
+          <button type="submit" class="px-4 py-2 bg-primary text-white rounded-lg hover:bg-primary/90 transition-colors">创建</button>
+        </div>
+      </form>
+    </div>
+  </div>
+  
+  <!-- 任务设置模态框 -->
+  <div id="task-settings-modal" class="fixed inset-0 bg-black/50 flex items-center justify-center z-50 hidden">
+    <div class="bg-white rounded-xl p-6 w-full max-w-md animate-fadeIn">
+      <div class="flex justify-between items-center mb-4">
+        <h3 class="text-xl font-semibold">任务设置</h3>
+        <button class="modal-close text-gray-500 hover:text-gray-700">
+          <i class="fa fa-times"></i>
+        </button>
+      </div>
+      
+      <div class="space-y-6">
+        <div>
+          <h4 class="text-sm font-medium text-gray-700 mb-3">列表排序方式</h4>
+          <select id="global-list-sort" class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary/30 focus:border-primary outline-none transition-colors">
+            <option value="createdAt">按创建时间</option>
+            <option value="startDate">按开始时间</option>
+            <option value="dueDate">按截止时间</option>
+            <option value="priority">按优先级</option>
+          </select>
+        </div>
+        
+        <div>
+          <h4 class="text-sm font-medium text-gray-700 mb-3">看板背景</h4>
+          <div class="grid grid-cols-6 gap-2">
+            <button type="button" class="board-bg-btn w-full h-8 rounded-full bg-white border-2 border-gray-300 hover:scale-110 transition-transform" data-color="bg-white"></button>
+            <button type="button" class="board-bg-btn w-full h-8 rounded-full bg-gray-50 border-2 border-transparent hover:scale-110 transition-transform" data-color="bg-gray-50"></button>
+            <button type="button" class="board-bg-btn w-full h-8 rounded-full bg-gray-100 border-2 border-transparent hover:scale-110 transition-transform" data-color="bg-gray-100"></button>
+            <button type="button" class="board-bg-btn w-full h-8 rounded-full bg-blue-50 border-2 border-transparent hover:scale-110 transition-transform" data-color="bg-blue-50"></button>
+            <button type="button" class="board-bg-btn w-full h-8 rounded-full bg-green-50 border-2 border-transparent hover:scale-110 transition-transform" data-color="bg-green-50"></button>
+            <button type="button" class="board-bg-btn w-full h-8 rounded-full bg-purple-50 border-2 border-transparent hover:scale-110 transition-transform" data-color="bg-purple-50"></button>
+          </div>
+          <input type="hidden" id="board-bg-color" value="bg-white">
+        </div>
+        
+        <div>
+          <h4 class="text-sm font-medium text-gray-700 mb-3">数据导出</h4>
+          <button id="export-tasks-btn" class="w-full flex items-center justify-center px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors">
+            <i class="fa fa-download mr-2"></i> 导出任务数据
+          </button>
+        </div>
+      </div>
+      
+      <div class="mt-6 flex justify-end">
+        <button type="button" class="modal-close px-4 py-2 border border-gray-300 rounded-lg mr-2 hover:bg-gray-50 transition-colors">取消</button>
+        <button id="save-task-settings" class="px-4 py-2 bg-primary text-white rounded-lg hover:bg-primary/90 transition-colors">保存设置</button>
+      </div>
+    </div>
+  </div>
+  
+  <!-- 任务详情模态框 -->
+  <div id="task-detail-modal" class="fixed inset-0 bg-black/50 flex items-center justify-center z-50 hidden">
+    <div class="bg-white rounded-xl p-6 w-full max-w-md animate-fadeIn">
+      <div class="flex justify-between items-center mb-4">
+        <h3 class="text-xl font-semibold">任务详情</h3>
+        <button class="modal-close text-gray-500 hover:text-gray-700">
+          <i class="fa fa-times"></i>
+        </button>
+      </div>
+      
+      <div id="task-detail-content">
+        <!-- 任务详情将通过JS动态生成 -->
+      </div>
+      
+      <div class="mt-6 flex justify-end">
+        <button id="delete-task-btn" class="px-4 py-2 border border-danger text-danger rounded-lg mr-2 hover:bg-danger/5 transition-colors">
+          <i class="fa fa-trash mr-1"></i> 删除
+        </button>
+        <button id="duplicate-task-btn" class="px-4 py-2 border border-gray-300 rounded-lg mr-2 hover:bg-gray-50 transition-colors">
+          <i class="fa fa-copy mr-1"></i> 复制
+        </button>
+        <button class="modal-close px-4 py-2 bg-primary text-white rounded-lg hover:bg-primary/90 transition-colors">关闭</button>
+      </div>
+    </div>
+  </div>
+  
+  <!-- 列表设置下拉菜单 -->
+  <div id="list-settings-dropdown" class="hidden absolute z-40 bg-white rounded-lg shadow-lg border border-gray-200 w-48 py-1">
+    <button id="edit-list-name" class="w-full text-left px-4 py-2 text-sm hover:bg-gray-50 transition-colors">
+      <i class="fa fa-pencil mr-2 text-gray-500"></i> 编辑名称
+    </button>
+    <button id="change-list-color" class="w-full text-left px-4 py-2 text-sm hover:bg-gray-50 transition-colors">
+      <i class="fa fa-paint-brush mr-2 text-gray-500"></i> 更改颜色
+    </button>
+    <button id="set-list-sort" class="w-full text-left px-4 py-2 text-sm hover:bg-gray-50 transition-colors">
+      <i class="fa fa-sort mr-2 text-gray-500"></i> 排序方式
+    </button>
+    <div class="border-t border-gray-200 my-1"></div>
+    <button id="delete-list" class="w-full text-left px-4 py-2 text-sm text-danger hover:bg-danger/5 transition-colors">
+      <i class="fa fa-trash mr-2"></i> 删除列表
+    </button>
+  </div>
+
+  <script>
+    // 应用状态管理
+    const appState = {
+      projects: [],
+      currentProjectId: null,
+      currentTaskId: null,
+      currentListId: null,
+      boardBackgroundColor: 'bg-white',
+      listSorting: 'createdAt',
+      ganttZoom: 1
+    };
+    
+    // 初始化应用
+    function initApp() {
+      loadData();
+      renderProjectsList();
+      updateProjectStats();
+      setupEventListeners();
+    }
+    
+    // 从本地存储加载数据
+    function loadData() {
+      const savedProjects = localStorage.getItem('kanbanProjects');
+      const savedSettings = localStorage.getItem('kanbanSettings');
+      
+      if (savedProjects) {
+        appState.projects = JSON.parse(savedProjects);
+      } else {
+        // 初始化示例项目
+        appState.projects = [
+          {
+            id: generateId(),
+            name: '网站重构项目',
+            description: '重新设计和开发公司官网',
+            createdAt: new Date().toISOString(),
+            lists: [
+              {
+                id: generateId(),
+                name: '待办',
+                color: 'bg-blue-50',
+                createdAt: new Date().toISOString(),
+                sortBy: 'createdAt',
+                tasks: [
+                  {
+                    id: generateId(),
+                    title: '设计首页原型',
+                    description: '创建首页的线框图和视觉设计',
+                    priority: 'high',
+                    startDate: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString(),
+                    dueDate: new Date(Date.now() + 2 * 24 * 60 * 60 * 1000).toISOString(),
+                    createdAt: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString(),
+                    completedAt: null
+                  },
+                  {
+                    id: generateId(),
+                    title: '收集客户反馈',
+                    description: '与主要客户沟通，了解他们的需求',
+                    priority: 'medium',
+                    startDate: new Date(Date.now() - 5 * 24 * 60 * 60 * 1000).toISOString(),
+                    dueDate: new Date(Date.now() + 5 * 24 * 60 * 60 * 1000).toISOString(),
+                    createdAt: new Date(Date.now() - 5 * 24 * 60 * 60 * 1000).toISOString(),
+                    completedAt: null
+                  }
+                ]
+              },
+              {
+                id: generateId(),
+                name: '进行中',
+                color: 'bg-yellow-50',
+                createdAt: new Date().toISOString(),
+                sortBy: 'createdAt',
+                tasks: [
+                  {
+                    id: generateId(),
+                    title: '开发导航组件',
+                    description: '实现响应式导航栏和下拉菜单',
+                    priority: 'medium',
+                    startDate: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString(),
+                    dueDate: new Date(Date.now() + 1 * 24 * 60 * 60 * 1000).toISOString(),
+                    createdAt: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString(),
+                    completedAt: null
+                  }
+                ]
+              },
+              {
+                id: generateId(),
+                name: '已完成',
+                color: 'bg-green-50',
+                createdAt: new Date().toISOString(),
+                sortBy: 'createdAt',
+                tasks: [
+                  {
+                    id: generateId(),
+                    title: '需求分析文档',
+                    description: '详细记录项目需求和功能点',
+                    priority: 'high',
+                    startDate: new Date(Date.now() - 10 * 24 * 60 * 60 * 1000).toISOString(),
+                    dueDate: new Date(Date.now() - 8 * 24 * 60 * 60 * 1000).toISOString(),
+                    createdAt: new Date(Date.now() - 10 * 24 * 60 * 60 * 1000).toISOString(),
+                    completedAt: new Date(Date.now() - 8 * 24 * 60 * 60 * 1000).toISOString()
+                  }
+                ]
+              }
+            ]
+          }
+        ];
+        saveData();
+      }
+      
+      if (savedSettings) {
+        const settings = JSON.parse(savedSettings);
+        appState.boardBackgroundColor = settings.boardBackgroundColor || 'bg-white';
+        appState.listSorting = settings.listSorting || 'createdAt';
+        document.getElementById('kanban-container').className = `${document.getElementById('kanban-container').className} ${appState.boardBackgroundColor}`;
+        document.getElementById('global-list-sort').value = appState.listSorting;
+        document.getElementById('board-bg-color').value = appState.boardBackgroundColor;
+      }
+    }
+    
+    // 保存数据到本地存储
+    function saveData() {
+      localStorage.setItem('kanbanProjects', JSON.stringify(appState.projects));
+      
+      const settings = {
+        boardBackgroundColor: appState.boardBackgroundColor,
+        listSorting: appState.listSorting
+      };
+      localStorage.setItem('kanbanSettings', JSON.stringify(settings));
+    }
+    
+    // 生成唯一ID
+    function generateId() {
+      return Date.now().toString(36) + Math.random().toString(36).substr(2, 5);
+    }
+    
+    // 渲染项目列表
+    function renderProjectsList() {
+      const projectsListEl = document.getElementById('projects-list');
+      projectsListEl.innerHTML = '';
+      
+      appState.projects.forEach(project => {
+        const projectEl = document.createElement('li');
+        projectEl.className = `p-3 rounded-lg cursor-pointer hover:bg-gray-50 transition-colors ${appState.currentProjectId === project.id ? 'bg-primary/10 text-primary' : 'text-gray-700'}`;
+        projectEl.dataset.projectId = project.id;
+        
+        // 计算项目任务统计
+        let totalTasks = 0;
+        let completedTasks = 0;
+        
+        project.lists.forEach(list => {
+          totalTasks += list.tasks.length;
+          if (list === project.lists[project.lists.length - 1]) {
+            completedTasks += list.tasks.length;
+          }
+        });
+        
+        projectEl.innerHTML = `
+          <div class="flex justify-between items-start">
+            <div>
+              <p class="font-medium truncate">${project.name}</p>
+              <p class="text-xs text-gray-500 mt-1 truncate">${project.description || '无描述'}</p>
+            </div>
+            <span class="text-xs bg-gray-100 px-2 py-0.5 rounded-full">${completedTasks}/${totalTasks}</span>
+          </div>
+        `;
+        
+        projectsListEl.appendChild(projectEl);
+        
+        // 添加点击事件
+        projectEl.addEventListener('click', () => selectProject(project.id));
+      });
+    }
+    
+    // 选择项目
+    function selectProject(projectId) {
+      appState.currentProjectId = projectId;
+      renderProjectsList();
+      
+      const project = appState.projects.find(p => p.id === projectId);
+      document.getElementById('current-project-title').textContent = project.name;
+      
+      // 显示项目内容，隐藏无项目选中提示
+      document.getElementById('project-content').classList.remove('hidden');
+      document.getElementById('no-project-selected').classList.add('hidden');
+      
+      // 默认显示仪表板
+      showTab('dashboard');
+      
+      // 渲染各个选项卡内容
+      renderDashboard();
+      renderKanban();
+      renderGantt();
+    }
+    
+    // 更新项目统计数据
+    function updateProjectStats() {
+      let totalTasks = 0;
+      let completedTasks = 0;
+      
+      appState.projects.forEach(project => {
+        project.lists.forEach((list, index) => {
+          totalTasks += list.tasks.length;
+          if (index === project.lists.length - 1) {
+            completedTasks += list.tasks.length;
+          }
+        });
+      });
+      
+      const inProgressTasks = totalTasks - completedTasks;
+      
+      document.getElementById('total-tasks').textContent = totalTasks;
+      document.getElementById('completed-tasks').textContent = completedTasks;
+      document.getElementById('in-progress-tasks').textContent = inProgressTasks;
+    }
+    
+    // 显示指定选项卡
+    function showTab(tabId) {
+      // 更新选项卡按钮状态
+      document.querySelectorAll('.tab-btn').forEach(btn => {
+        if (btn.dataset.tab === tabId) {
+          btn.classList.add('active', 'text-primary', 'border-b-2', 'border-primary');
+          btn.classList.remove('text-gray-500');
+        } else {
+          btn.classList.remove('active', 'text-primary', 'border-b-2', 'border-primary');
+          btn.classList.add('text-gray-500');
+        }
+      });
+      
+      // 更新选项卡内容显示
+      document.querySelectorAll('.tab-content').forEach(content => {
+        content.classList.add('hidden');
+      });
+      document.getElementById(`${tabId}-tab`).classList.remove('hidden');
+    }
+    
+    // 渲染仪表板
+    function renderDashboard() {
+      const project = appState.projects.find(p => p.id === appState.currentProjectId);
+      if (!project) return;
+      
+      // 计算任务统计
+      let totalTasks = 0;
+      let completedTasks = 0;
+      let overdueTasks = 0;
+      const tasksByStatus = {};
+      const tasksByPriority = { low: 0, medium: 0, high: 0, urgent: 0 };
+      
+      project.lists.forEach((list, index) => {
+        tasksByStatus[list.name] = list.tasks.length;
+        totalTasks += list.tasks.length;
+        
+        // 最后一个列表视为已完成
+        if (index === project.lists.length - 1) {
+          completedTasks += list.tasks.length;
+        }
+        
+        // 检查逾期任务
+        list.tasks.forEach(task => {
+          if (task.dueDate && new Date(task.dueDate) < new Date() && !task.completedAt) {
+            overdueTasks++;
+          }
+          
+          // 统计优先级
+          tasksByPriority[task.priority]++;
+        });
+      });
+      
+      // 更新统计数字
+      document.getElementById('dashboard-total-tasks').textContent = totalTasks;
+      document.getElementById('dashboard-completed-tasks').textContent = completedTasks;
+      document.getElementById('dashboard-overdue-tasks').textContent = overdueTasks;
+      
+      // 渲染任务状态饼图
+      const statusCtx = document.getElementById('task-status-chart').getContext('2d');
+      if (window.taskStatusChart) {
+        window.taskStatusChart.destroy();
+      }
+      
+      window.taskStatusChart = new Chart(statusCtx, {
+        type: 'doughnut',
+        data: {
+          labels: Object.keys(tasksByStatus),
+          datasets: [{
+            data: Object.values(tasksByStatus),
+            backgroundColor: [
+              '#165DFF', '#FAAD14', '#52C41A', '#FF4D4F', '#722ED1', '#EB0AA4'
+            ],
+            borderWidth: 0,
+            hoverOffset: 4
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: {
+              position: 'right',
+              labels: {
+                boxWidth: 12,
+                padding: 15
+              }
+            }
+          },
+          cutout: '70%'
+        }
+      });
+      
+      // 渲染优先级分布饼图
+      const priorityCtx = document.getElementById('priority-chart').getContext('2d');
+      if (window.priorityChart) {
+        window.priorityChart.destroy();
+      }
+      
+      window.priorityChart = new Chart(priorityCtx, {
+        type: 'pie',
+        data: {
+          labels: ['低', '中', '高', '紧急'],
+          datasets: [{
+            data: [
+              tasksByPriority.low,
+              tasksByPriority.medium,
+              tasksByPriority.high,
+              tasksByPriority.urgent
+            ],
+            backgroundColor: [
+              '#52C41A', '#FAAD14', '#FA8C16', '#FF4D4F'
+            ],
+            borderWidth: 0,
+            hoverOffset: 4
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: {
+              position: 'right',
+              labels: {
+                boxWidth: 12,
+                padding: 15
+              }
+            }
+          }
+        }
+      });
+      
+      // 渲染近期任务表格
+      const upcomingTasksTable = document.getElementById('upcoming-tasks-table');
+      upcomingTasksTable.innerHTML = '';
+      
+      // 收集所有任务并按截止日期排序
+      let allTasks = [];
+      project.lists.forEach(list => {
+        list.tasks.forEach(task => {
+          allTasks.push({ ...task, listName: list.name });
+        });
+      });
+      
+      // 按截止日期排序，只显示前5个
+      allTasks.sort((a, b) => {
+        if (!a.dueDate) return 1;
+        if (!b.dueDate) return -1;
+        return new Date(a.dueDate) - new Date(b.dueDate);
+      });
+      
+      const upcomingTasks = allTasks.slice(0, 5);
+      
+      upcomingTasks.forEach(task => {
+        const row = document.createElement('tr');
+        row.className = 'border-b border-gray-100 hover:bg-gray-50 transition-colors';
+        
+        // 格式化日期
+        const dueDateFormatted = task.dueDate ? formatDateTime(new Date(task.dueDate)) : '无';
+        
+        // 确定优先级样式
+        let priorityClass = '';
+        let priorityText = '';
+        
+        switch(task.priority) {
+          case 'low':
+            priorityClass = 'bg-green-100 text-green-800';
+            priorityText = '低';
+            break;
+          case 'medium':
+            priorityClass = 'bg-yellow-100 text-yellow-800';
+            priorityText = '中';
+            break;
+          case 'high':
+            priorityClass = 'bg-orange-100 text-orange-800';
+            priorityText = '高';
+            break;
+          case 'urgent':
+            priorityClass = 'bg-red-100 text-red-800';
+            priorityText = '紧急';
+            break;
+        }
+        
+        // 检查是否逾期
+        const isOverdue = task.dueDate && new Date(task.dueDate) < new Date() && !task.completedAt;
+        
+        row.innerHTML = `
+          <td class="py-3 px-2">
+            <div class="${task.completedAt ? 'line-through text-gray-500' : ''}">${task.title}</div>
+          </td>
+          <td class="py-3 px-2">
+            <span class="px-2 py-1 text-xs rounded-full bg-gray-100">${task.listName}</span>
+          </td>
+          <td class="py-3 px-2">
+            <span class="px-2 py-1 text-xs rounded-full ${priorityClass}">${priorityText}</span>
+          </td>
+          <td class="py-3 px-2 ${isOverdue ? 'text-danger' : ''}">
+            ${dueDateFormatted}
+          </td>
+        `;
+        
+        upcomingTasksTable.appendChild(row);
+      });
+      
+      if (upcomingTasks.length === 0) {
+        upcomingTasksTable.innerHTML = `
+          <tr>
+            <td colspan="4" class="py-6 text-center text-gray-500">
+              没有任务数据
+            </td>
+          </tr>
+        `;
+      }
+    }
+    
+    // 渲染Kanban看板
+    function renderKanban() {
+      const project = appState.projects.find(p => p.id === appState.currentProjectId);
+      if (!project) return;
+      
+      const kanbanContainer = document.getElementById('kanban-container');
+      kanbanContainer.innerHTML = '';
+      
+      // 应用看板背景色
+      kanbanContainer.className = `flex h-[calc(100%-56px)] overflow-x-auto p-4 space-x-4 custom-scrollbar ${appState.boardBackgroundColor}`;
+      
+      // 按排序方式对列表进行排序
+      const sortedLists = [...project.lists].sort((a, b) => {
+        switch(appState.listSorting) {
+          case 'createdAt':
+            return new Date(a.createdAt) - new Date(b.createdAt);
+          default:
+            return 0; // 默认按创建时间排序
+        }
+      });
+      
+      sortedLists.forEach(list => {
+        const listEl = document.createElement('div');
+        listEl.className = `list-shadow rounded-lg w-72 flex-shrink-0 flex flex-col h-fit max-h-[calc(100%-1rem)] ${list.color}`;
+        listEl.dataset.listId = list.id;
+        
+        // 对任务进行排序
+        const sortedTasks = [...list.tasks].sort((a, b) => {
+          switch(list.sortBy) {
+            case 'createdAt':
+              return new Date(b.createdAt) - new Date(a.createdAt); // 最新的在前
+            case 'startDate':
+              if (!a.startDate) return 1;
+              if (!b.startDate) return -1;
+              return new Date(a.startDate) - new Date(b.startDate);
+            case 'dueDate':
+              if (!a.dueDate) return 1;
+              if (!b.dueDate) return -1;
+              return new Date(a.dueDate) - new Date(b.dueDate);
+            case 'priority':
+              const priorityOrder = { urgent: 4, high: 3, medium: 2, low: 1 };
+              return priorityOrder[b.priority] - priorityOrder[a.priority];
+            default:
+              return new Date(b.createdAt) - new Date(a.createdAt);
+          }
+        });
+        
+        listEl.innerHTML = `
+          <div class="p-3 border-b border-gray-200 flex justify-between items-center">
+            <h3 class="font-medium">${list.name}</h3>
+            <div class="flex items-center">
+              <span class="text-xs bg-gray-200 px-2 py-0.5 rounded-full mr-2">${list.tasks.length}</span>
+              <button class="list-settings-btn text-gray-500 hover:text-gray-700 p-1" data-list-id="${list.id}">
+                <i class="fa fa-ellipsis-h"></i>
+              </button>
+            </div>
+          </div>
+          <div class="task-list p-2 flex-1 overflow-y-auto max-h-[calc(100vh-240px)] min-h-[100px] custom-scrollbar" data-list-id="${list.id}">
+            ${sortedTasks.map(task => `
+              <div class="task-shadow bg-white rounded-lg p-3 mb-2 cursor-pointer hover:shadow-md transition-all-custom" draggable="true" data-task-id="${task.id}" data-list-id="${list.id}">
+                <div class="flex justify-between items-start mb-2">
+                  <h4 class="${task.completedAt ? 'line-through text-gray-500' : ''}">${task.title}</h4>
+                  ${getPriorityIndicator(task.priority)}
+                </div>
+                <p class="text-sm text-gray-500 mb-3 line-clamp-2">${task.description || ''}</p>
+                <div class="text-xs text-gray-400 space-y-1">
+                  ${task.startDate ? `<div><i class="fa fa-calendar-o mr-1"></i> 开始: ${formatDateTime(new Date(task.startDate))}</div>` : ''}
+                  ${task.dueDate ? `<div><i class="fa fa-calendar-check-o mr-1"></i> 截止: ${formatDateTime(new Date(task.dueDate))}</div>` : ''}
+                  ${task.completedAt ? `<div><i class="fa fa-check-circle-o mr-1"></i> 完成: ${formatDateTime(new Date(task.completedAt))}</div>` : ''}
+                </div>
+              </div>
+            `).join('')}
+          </div>
+          <div class="p-2 border-t border-gray-200">
+            <button class="add-task-btn w-full text-sm text-gray-500 hover:text-primary py-2 flex items-center justify-center" data-list-id="${list.id}">
+              <i class="fa fa-plus mr-1"></i> 添加任务
+            </button>
+          </div>
+        `;
+        
+        kanbanContainer.appendChild(listEl);
+      });
+      
+      // 初始化拖拽功能
+      initDragAndDrop();
+      
+      // 添加任务按钮事件
+      document.querySelectorAll('.add-task-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const listId = btn.dataset.listId;
+          document.getElementById('task-list-id').value = listId;
+          openModal('new-task-modal');
+        });
+      });
+      
+      // 列表设置按钮事件
+      document.querySelectorAll('.list-settings-btn').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const listId = btn.dataset.listId;
+          appState.currentListId = listId;
+          
+          const dropdown = document.getElementById('list-settings-dropdown');
+          const rect = btn.getBoundingClientRect();
+          
+          dropdown.style.top = `${rect.bottom + window.scrollY}px`;
+          dropdown.style.left = `${rect.right - dropdown.offsetWidth + window.scrollX}px`;
+          dropdown.classList.remove('hidden');
+        });
+      });
+      
+      // 点击任务查看详情
+      document.querySelectorAll('.task-shadow').forEach(taskEl => {
+        taskEl.addEventListener('click', () => {
+          const taskId = taskEl.dataset.taskId;
+          showTaskDetails(taskId);
+        });
+      });
+    }
+    
+    // 初始化拖拽功能
+    function initDragAndDrop() {
+      const taskLists = document.querySelectorAll('.task-list');
+      
+      taskLists.forEach(list => {
+        new Sortable(list, {
+          group: 'tasks',
+          animation: 150,
+          ghostClass: 'bg-gray-100',
+          chosenClass: 'dragging',
+          dragClass: 'dragging',
+          onAdd: function(evt) {
+            const taskId = evt.item.dataset.taskId;
+            const fromListId = evt.from.dataset.listId;
+            const toListId = evt.to.dataset.listId;
+            
+            // 如果移动到了最后一个列表，标记为已完成
+            const project = appState.projects.find(p => p.id === appState.currentProjectId);
+            const toListIndex = project.lists.findIndex(l => l.id === toListId);
+            
+            // 移动任务
+            moveTask(taskId, fromListId, toListId);
+            
+            // 如果移动到了最后一个列表且之前未完成，设置完成时间
+            if (toListIndex === project.lists.length - 1) {
+              const task = getTaskById(taskId);
+              if (!task.completedAt) {
+                task.completedAt = new Date().toISOString();
+                saveData();
+              }
+            }
+            
+            // 如果从最后一个列表移走，清除完成时间
+            const fromListIndex = project.lists.findIndex(l => l.id === fromListId);
+            if (fromListIndex === project.lists.length - 1) {
+              const task = getTaskById(taskId);
+              task.completedAt = null;
+              saveData();
+            }
+            
+            // 重新渲染看板和相关视图
+            renderKanban();
+            renderDashboard();
+            renderGantt();
+            updateProjectStats();
+          }
+        });
+      });
+      
+      // 初始化列表拖拽
+      const kanbanContainer = document.getElementById('kanban-container');
+      new Sortable(kanbanContainer, {
+        animation: 150,
+        ghostClass: 'drag-over',
+        handle: '.list-settings-btn',
+        onEnd: function() {
+          // 更新列表顺序
+          const project = appState.projects.find(p => p.id === appState.currentProjectId);
+          const newListOrder = [];
+          
+          document.querySelectorAll('#kanban-container > div').forEach(el => {
+            const listId = el.dataset.listId;
+            const list = project.lists.find(l => l.id === listId);
+            if (list) {
+              newListOrder.push(list);
+            }
+          });
+          
+          project.lists = newListOrder;
+          saveData();
+        }
+      });
+    }
+    
+    // 渲染甘特图
+    function renderGantt() {
+      const project = appState.projects.find(p => p.id === appState.currentProjectId);
+      if (!project) return;
+      
+      // 收集所有有时间的任务
+      let allTasks = [];
+      project.lists.forEach(list => {
+        list.tasks.forEach(task => {
+          if (task.startDate && task.dueDate) {
+            allTasks.push({ ...task, listName: list.name });
+          }
+        });
+      });
+      
+      if (allTasks.length === 0) {
+        document.getElementById('gantt-header').innerHTML = '<div class="flex-1 p-2 text-sm text-gray-500">没有足够的任务时间数据来显示甘特图</div>';
+        document.getElementById('gantt-body').innerHTML = '';
+        return;
+      }
+      
+      // 确定时间范围（最早开始时间到最晚结束时间，增加一些缓冲）
+      const startDates = allTasks.map(t => new Date(t.startDate));
+      const endDates = allTasks.map(t => new Date(t.dueDate));
+      
+      const minDate = new Date(Math.min(...startDates));
+      const maxDate = new Date(Math.max(...endDates));
+      
+      // 增加一些缓冲时间
+      minDate.setDate(minDate.getDate() - 1);
+      maxDate.setDate(maxDate.getDate() + 1);
+      
+      // 生成日期头部
+      const ganttHeader = document.getElementById('gantt-header');
+      ganttHeader.innerHTML = '';
+      
+      // 添加列表名称列
+      const listNameHeader = document.createElement('div');
+      listNameHeader.className = 'w-48 border-r border-gray-200 flex items-center px-3 font-medium text-sm';
+      listNameHeader.textContent = '任务';
+      ganttHeader.appendChild(listNameHeader);
+      
+      // 计算日期范围的天数
+      const dayCount = Math.ceil((maxDate - minDate) / (1000 * 60 * 60 * 24)) + 1;
+      
+      // 创建日期单元格
+      for (let i = 0; i < dayCount; i++) {
+        const date = new Date(minDate);
+        date.setDate(minDate.getDate() + i);
+        
+        const dateCell = document.createElement('div');
+        dateCell.className = `flex-shrink-0 w-[${60 * appState.ganttZoom}px] border-r border-gray-200 flex items-center justify-center text-xs text-gray-500`;
+        dateCell.style.minWidth = `${60 * appState.ganttZoom}px`;
+        
+        // 只显示日期
+        dateCell.textContent = date.getDate();
+        
+        // 周末添加不同样式
+        if (date.getDay() === 0 || date.getDay() === 6) {
+          dateCell.classList.add('bg-gray-50');
+        }
+        
+        // 今天添加不同样式
+        const today = new Date();
+        if (date.toDateString() === today.toDateString()) {
+          dateCell.classList.add('bg-primary/10', 'text-primary', 'font-medium');
+        }
+        
+        ganttHeader.appendChild(dateCell);
+      }
+      
+      // 生成甘特图主体
+      const ganttBody = document.getElementById('gantt-body');
+      ganttBody.innerHTML = '';
+      
+      // 按开始时间排序任务
+      allTasks.sort((a, b) => new Date(a.startDate) - new Date(b.startDate));
+      
+      allTasks.forEach((task, index) => {
+        const taskRow = document.createElement('div');
+        taskRow.className = `h-10 border-b border-gray-200 flex`;
+        
+        // 任务名称列
+        const taskNameCell = document.createElement('div');
+        taskNameCell.className = 'w-48 border-r border-gray-200 flex items-center px-3 text-sm';
+        taskNameCell.textContent = task.title;
+        taskRow.appendChild(taskNameCell);
+        
+        // 时间轴背景
+        const timelineBackground = document.createElement('div');
+        timelineBackground.className = 'flex-1 relative';
+        timelineBackground.style.minWidth = `${dayCount * 60 * appState.ganttZoom}px`;
+        
+        // 创建任务条
+        const taskStart = new Date(task.startDate);
+        const taskEnd = new Date(task.dueDate);
+        
+        // 计算任务在时间轴上的位置和宽度
+        const startOffset = Math.ceil((taskStart - minDate) / (1000 * 60 * 60 * 24));
+        const endOffset = Math.ceil((taskEnd - minDate) / (1000 * 60 * 60 * 24));
+        const taskWidth = endOffset - startOffset;
+        
+        // 根据优先级设置颜色
+        let taskColor = '#165DFF'; // 默认蓝色
+        switch(task.priority) {
+          case 'low':
+            taskColor = '#52C41A'; // 绿色
+            break;
+          case 'medium':
+            taskColor = '#FAAD14'; // 黄色
+            break;
+          case 'high':
+            taskColor = '#FA8C16'; // 橙色
+            break;
+          case 'urgent':
+            taskColor = '#FF4D4F'; // 红色
+            break;
+        }
+        
+        // 如果任务已完成，添加透明度
+        if (task.completedAt) {
+          taskColor += '80'; // 添加透明度
+        }
+        
+        const taskBar = document.createElement('div');
+        taskBar.className = 'gantt-task';
+        taskBar.style.left = `${startOffset * 60 * appState.ganttZoom}px`;
+        taskBar.style.width = `${Math.max(1, taskWidth) * 60 * appState.ganttZoom}px`;
+        taskBar.style.backgroundColor = taskColor;
+        taskBar.textContent = task.title;
+        taskBar.dataset.taskId = task.id;
+        
+        // 添加点击事件查看任务详情
+        taskBar.addEventListener('click', () => {
+          showTaskDetails(task.id);
+        });
+        
+        timelineBackground.appendChild(taskBar);
+        taskRow.appendChild(timelineBackground);
+        ganttBody.appendChild(taskRow);
+      });
+    }
+    
+    // 显示任务详情
+    function showTaskDetails(taskId) {
+      appState.currentTaskId = taskId;
+      const task = getTaskById(taskId);
+      
+      if (!task) return;
+      
+      const taskDetailContent = document.getElementById('task-detail-content');
+      
+      // 确定优先级样式
+      let priorityClass = '';
+      let priorityText = '';
+      
+      switch(task.priority) {
+        case 'low':
+          priorityClass = 'bg-green-100 text-green-800';
+          priorityText = '低';
+          break;
+        case 'medium':
+          priorityClass = 'bg-yellow-100 text-yellow-800';
+          priorityText = '中';
+          break;
+        case 'high':
+          priorityClass = 'bg-orange-100 text-orange-800';
+          priorityText = '高';
+          break;
+        case 'urgent':
+          priorityClass = 'bg-red-100 text-red-800';
+          priorityText = '紧急';
+          break;
+      }
+      
+      taskDetailContent.innerHTML = `
+        <div class="mb-4">
+          <label class="block text-sm font-medium text-gray-700 mb-1">任务名称</label>
+          <div class="p-2 border border-gray-200 rounded-lg ${task.completedAt ? 'line-through text-gray-500' : ''}">
+            ${task.title}
+          </div>
+        </div>
+        
+        <div class="mb-4">
+          <label class="block text-sm font-medium text-gray-700 mb-1">任务描述</label>
+          <div class="p-2 border border-gray-200 rounded-lg min-h-[80px]">
+            ${task.description || '<span class="text-gray-400">无描述</span>'}
+          </div>
+        </div>
+        
+        <div class="grid grid-cols-2 gap-4 mb-4">
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">开始时间</label>
+            <div class="p-2 border border-gray-200 rounded-lg">
+              ${task.startDate ? formatDateTime(new Date(task.startDate)) : '<span class="text-gray-400">未设置</span>'}
+            </div>
+          </div>
+          <div>
+            <label class="block text-sm font-medium text-gray-700 mb-1">截止时间</label>
+            <div class="p-2 border border-gray-200 rounded-lg ${task.dueDate && new Date(task.dueDate) < new Date() && !task.completedAt ? 'text-danger' : ''}">
+              ${task.dueDate ? formatDateTime(new Date(task.dueDate)) : '<span class="text-gray-400">未设置</span>'}
+            </div>
+          </div>
+        </div>
+        
+        <div class="mb-4">
+          <label class="block text-sm font-medium text-gray-700 mb-1">优先级</label>
+          <div class="p-2 border border-gray-200 rounded-lg">
+            <span class="px-2 py-1 text-xs rounded-full ${priorityClass}">${priorityText}</span>
+          </div>
+        </div>
+        
+        <div class="mb-4">
+          <label class="block text-sm font-medium text-gray-700 mb-1">创建时间</label>
+          <div class="p-2 border border-gray-200 rounded-lg">
+            ${formatDateTime(new Date(task.createdAt))}
+          </div>
+        </div>
+        
+        ${task.completedAt ? `
+          <div class="mb-4">
+            <label class="block text-sm font-medium text-gray-700 mb-1">完成时间</label>
+            <div class="p-2 border border-gray-200 rounded-lg text-success">
+              ${formatDateTime(new Date(task.completedAt))}
+            </div>
+          </div>
+        ` : ''}
+      `;
+      
+      openModal('task-detail-modal');
+    }
+    
+    // 获取优先级指示器
+    function getPriorityIndicator(priority) {
+      switch(priority) {
+        case 'low':
+          return '<span class="w-2 h-2 rounded-full bg-green-500"></span>';
+        case 'medium':
+          return '<span class="w-2 h-2 rounded-full bg-yellow-500"></span>';
+        case 'high':
+          return '<span class="w-2 h-2 rounded-full bg-orange-500"></span>';
+        case 'urgent':
+          return '<span class="w-2 h-2 rounded-full bg-red-500"></span>';
+        default:
+          return '';
+      }
+    }
+    
+    // 格式化日期时间
+    function formatDateTime(date) {
+      return date.toLocaleString('zh-CN', {
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit'
+      });
+    }
+    
+    // 根据ID获取任务
+    function getTaskById(taskId) {
+      const project = appState.projects.find(p => p.id === appState.currentProjectId);
+      if (!project) return null;
+      
+      for (const list of project.lists) {
+        const task = list.tasks.find(t => t.id === taskId);
+        if (task) return task;
+      }
+      
+      return null;
+    }
+    
+    // 移动任务
+    function moveTask(taskId, fromListId, toListId) {
+      if (fromListId === toListId) return;
+      
+      const project = appState.projects.find(p => p.id === appState.currentProjectId);
+      if (!project) return;
+      
+      const fromList = project.lists.find(l => l.id === fromListId);
+      const toList = project.lists.find(l => l.id === toListId);
+      
+      if (!fromList || !toList) return;
+      
+      const taskIndex = fromList.tasks.findIndex(t => t.id === taskId);
+      if (taskIndex === -1) return;
+      
+      // 从原列表移除
+      const [task] = fromList.tasks.splice(taskIndex, 1);
+      
+      // 添加到新列表
+      toList.tasks.push(task);
+      
+      saveData();
+    }
+    
+    // 打开模态框
+    function openModal(modalId) {
+      document.getElementById(modalId).classList.remove('hidden');
+      
+      // 重置表单
+      if (modalId === 'new-project-form') {
+        document.getElementById('new-project-form').reset();
+      } else if (modalId === 'new-list-form') {
+        document.getElementById('new-list-form').reset();
+        document.getElementById('list-color').value = 'bg-blue-50';
+        document.querySelectorAll('.list-color-btn').forEach(btn => {
+          btn.classList.remove('border-primary');
+        });
+        document.querySelector(`.list-color-btn[data-color="bg-blue-50"]`).classList.add('border-primary');
+      } else if (modalId === 'new-task-form') {
+        document.getElementById('new-task-form').reset();
+        // 设置默认日期为当前时间
+        const now = new Date();
+        now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
+        document.getElementById('task-start-date').value = now.toISOString().slice(0, 16);
+        
+        // 设置默认优先级为低
+        document.querySelector('input[name="priority"][value="low"]').checked = true;
+      }
+    }
+    
+    // 关闭所有模态框
+    function closeAllModals() {
+      document.querySelectorAll('[id$="-modal"]').forEach(modal => {
+        modal.classList.add('hidden');
+      });
+      
+      // 关闭下拉菜单
+      document.getElementById('list-settings-dropdown').classList.add('hidden');
+    }
+    
+    // 设置事件监听器
+    function setupEventListeners() {
+      // 点击外部关闭下拉菜单
+      document.addEventListener('click', (e) => {
+        const dropdown = document.getElementById('list-settings-dropdown');
+        const settingsBtn = e.target.closest('.list-settings-btn');
+        
+        if (!settingsBtn && !dropdown.contains(e.target)) {
+          dropdown.classList.add('hidden');
+        }
+      });
+      
+      // 侧边栏切换
+      document.getElementById('toggle-sidebar').addEventListener('click', () => {
+        const sidebar = document.getElementById('sidebar');
+        sidebar.classList.toggle('-translate-x-full');
+      });
+      
+      document.getElementById('show-sidebar').addEventListener('click', () => {
+        const sidebar = document.getElementById('sidebar');
+        sidebar.classList.remove('-translate-x-full');
+      });
+      
+      // 选项卡切换
+      document.querySelectorAll('.tab-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+          showTab(btn.dataset.tab);
+        });
+      });
+      
+      // 添加项目按钮
+      document.getElementById('add-project-btn').addEventListener('click', () => {
+        openModal('new-project-modal');
+      });
+      
+      document.getElementById('create-first-project').addEventListener('click', () => {
+        openModal('new-project-modal');
+      });
+      
+      // 新建项目表单提交
+      document.getElementById('new-project-form').addEventListener('submit', (e) => {
+        e.preventDefault();
+        
+        const projectName = document.getElementById('project-name').value;
+        const projectDescription = document.getElementById('project-description').value;
+        
+        const newProject = {
+          id: generateId(),
+          name: projectName,
+          description: projectDescription,
+          createdAt: new Date().toISOString(),
+          lists: [
+            {
+              id: generateId(),
+              name: '待办',
+              color: 'bg-blue-50',
+              createdAt: new Date().toISOString(),
+              sortBy: 'createdAt',
+              tasks: []
+            },
+            {
+              id: generateId(),
+              name: '进行中',
+              color: 'bg-yellow-50',
+              createdAt: new Date().toISOString(),
+              sortBy: 'createdAt',
+              tasks: []
+            },
+            {
+              id: generateId(),
+              name: '已完成',
+              color: 'bg-green-50',
+              createdAt: new Date().toISOString(),
+              sortBy: 'createdAt',
+              tasks: []
+            }
+          ]
+        };
+        
+        appState.projects.push(newProject);
+        saveData();
+        renderProjectsList();
+        updateProjectStats();
+        closeAllModals();
+        
+        // 自动选择新创建的项目
+        selectProject(newProject.id);
+      });
+      
+      // 添加列表按钮
+      document.getElementById('add-list-btn').addEventListener('click', () => {
+        openModal('new-list-modal');
+      });
+      
+      // 列表颜色选择
+      document.querySelectorAll('.list-color-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+          document.querySelectorAll('.list-color-btn').forEach(b => {
+            b.classList.remove('border-primary');
+          });
+          btn.classList.add('border-primary');
+          document.getElementById('list-color').value = btn.dataset.color;
+        });
+      });
+      
+      // 新建列表表单提交
+      document.getElementById('new-list-form').addEventListener('submit', (e) => {
+        e.preventDefault();
+        
+        const listName = document.getElementById('list-name').value;
+        const listColor = document.getElementById('list-color').value;
+        
+        const project = appState.projects.find(p => p.id === appState.currentProjectId);
+        if (!project) return;
+        
+        const newList = {
+          id: generateId(),
+          name: listName,
+          color: listColor,
+          createdAt: new Date().toISOString(),
+          sortBy: appState.listSorting,
+          tasks: []
+        };
+        
+        project.lists.push(newList);
+        saveData();
+        renderKanban();
+        closeAllModals();
+      });
+      
+      // 新建任务表单提交
+      document.getElementById('new-task-form').addEventListener('submit', (e) => {
+        e.preventDefault();
+        
+        const listId = document.getElementById('task-list-id').value;
+        const taskTitle = document.getElementById('task-title').value;
+        const taskDescription = document.getElementById('task-description').value;
+        const taskStartDate = document.getElementById('task-start-date').value;
+        const taskDueDate = document.getElementById('task-due-date').value;
+        const taskPriority = document.querySelector('input[name="priority"]:checked').value;
+        
+        const project = appState.projects.find(p => p.id === appState.currentProjectId);
+        if (!project) return;
+        
+        const list = project.lists.find(l => l.id === listId);
+        if (!list) return;
+        
+        const newTask = {
+          id: generateId(),
+          title: taskTitle,
+          description: taskDescription,
+          priority: taskPriority,
+          startDate: taskStartDate ? new Date(taskStartDate).toISOString() : null,
+          dueDate: taskDueDate ? new Date(taskDueDate).toISOString() : null,
+          createdAt: new Date().toISOString(),
+          completedAt: null
+        };
+        
+        list.tasks.push(newTask);
+        saveData();
+        renderKanban();
+        renderDashboard();
+        renderGantt();
+        updateProjectStats();
+        closeAllModals();
+      });
+      
+      // 任务设置按钮
+      document.getElementById('task-settings-btn').addEventListener('click', () => {
+        openModal('task-settings-modal');
+      });
+      
+      // 看板背景颜色选择
+      document.querySelectorAll('.board-bg-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+          document.querySelectorAll('.board-bg-btn').forEach(b => {
+            b.classList.remove('border-primary');
+          });
+          btn.classList.add('border-primary');
+          document.getElementById('board-bg-color').value = btn.dataset.color;
+        });
+      });
+      
+      // 保存任务设置
+      document.getElementById('save-task-settings').addEventListener('click', () => {
+        appState.boardBackgroundColor = document.getElementById('board-bg-color').value;
+        appState.listSorting = document.getElementById('global-list-sort').value;
+        
+        saveData();
+        renderKanban();
+        closeAllModals();
+      });
+      
+      // 导出任务数据
+      document.getElementById('export-tasks-btn').addEventListener('click', () => {
+        const project = appState.projects.find(p => p.id === appState.currentProjectId);
+        if (!project) return;
+        
+        let csvContent = '';
+        
+        project.lists.forEach(list => {
+          // 添加列表名称作为标题
+          csvContent += `\n${list.name}\n`;
+          // 添加表头
+          csvContent += '创建时间,任务名称,截止时间\n';
+          
+          // 添加任务数据
+          list.tasks.forEach(task => {
+            const createdAt = task.createdAt ? new Date(task.createdAt).toLocaleString() : '';
+            const dueDate = task.dueDate ? new Date(task.dueDate).toLocaleString() : '';
+            // 处理包含逗号的文本
+            const title = `"${task.title.replace(/"/g, '""')}"`;
+            csvContent += `${createdAt},${title},${dueDate}\n`;
+          });
+        });
+        
+        // 创建下载链接
+        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.setAttribute('href', url);
+        link.setAttribute('download', `${project.name}_任务数据.csv`);
+        link.style.visibility = 'hidden';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+      });
+      
+      // 列表排序选择
+      document.getElementById('list-sort-select').addEventListener('change', (e) => {
+        const project = appState.projects.find(p => p.id === appState.currentProjectId);
+        if (!project) return;
+        
+        // 更新所有列表的排序方式
+        project.lists.forEach(list => {
+          list.sortBy = e.target.value;
+        });
+        
+        saveData();
+        renderKanban();
+      });
+      
+      // 编辑列表名称
+      document.getElementById('edit-list-name').addEventListener('click', () => {
+        const project = appState.projects.find(p => p.id === appState.currentProjectId);
+        if (!project) return;
+        
+        const list = project.lists.find(l => l.id === appState.currentListId);
+        if (!list) return;
+        
+        const newName = prompt('请输入新的列表名称', list.name);
+        if (newName && newName.trim() !== '') {
+          list.name = newName.trim();
+          saveData();
+          renderKanban();
+          renderDashboard();
+          renderGantt();
+        }
+        
+        document.getElementById('list-settings-dropdown').classList.add('hidden');
+      });
+      
+      // 更改列表颜色
+      document.getElementById('change-list-color').addEventListener('click', () => {
+        const project = appState.projects.find(p => p.id === appState.currentProjectId);
+        if (!project) return;
+        
+        const list = project.lists.find(l => l.id === appState.currentListId);
+        if (!list) return;
+        
+        // 创建颜色选择器
+        const colorOptions = [
+          { color: 'bg-blue-50', label: '蓝色' },
+          { color: 'bg-green-50', label: '绿色' },
+          { color: 'bg-yellow-50', label: '黄色' },
+          { color: 'bg-red-50', label: '红色' },
+          { color: 'bg-purple-50', label: '紫色' },
+          { color: 'bg-gray-50', label: '灰色' }
+        ];
+        
+        const colorLabels = colorOptions.map(opt => `${opt.label} (${opt.color})`).join(', ');
+        const selectedColorLabel = colorOptions.find(opt => opt.color === list.color)?.label || '蓝色';
+        
+        const colorChoice = prompt(`请选择列表颜色 (当前: ${selectedColorLabel})\n选项: ${colorLabels}`, selectedColorLabel);
+        
+        if (colorChoice) {
+          const selectedColor = colorOptions.find(opt => opt.label.toLowerCase() === colorChoice.toLowerCase());
+          if (selectedColor) {
+            list.color = selectedColor.color;
+            saveData();
+            renderKanban();
+          }
+        }
+        
+        document.getElementById('list-settings-dropdown').classList.add('hidden');
+      });
+      
+      // 设置列表排序方式
+      document.getElementById('set-list-sort').addEventListener('click', () => {
+        const project = appState.projects.find(p => p.id === appState.currentProjectId);
+        if (!project) return;
+        
+        const list = project.lists.find(l => l.id === appState.currentListId);
+        if (!list) return;
+        
+        const sortOptions = [
+          { value: 'createdAt', label: '创建时间' },
+          { value: 'startDate', label: '开始时间' },
+          { value: 'dueDate', label: '截止时间' },
+          { value: 'priority', label: '优先级' }
+        ];
+        
+        const sortLabels = sortOptions.map(opt => opt.label).join(', ');
+        const currentSortLabel = sortOptions.find(opt => opt.value === list.sortBy)?.label || '创建时间';
+        
+        const sortChoice = prompt(`请选择排序方式 (当前: ${currentSortLabel})\n选项: ${sortLabels}`, currentSortLabel);
+        
+        if (sortChoice) {
+          const selectedSort = sortOptions.find(opt => opt.label === sortChoice);
+          if (selectedSort) {
+            list.sortBy = selectedSort.value;
+            saveData();
+            renderKanban();
+          }
+        }
+        
+        document.getElementById('list-settings-dropdown').classList.add('hidden');
+      });
+      
+      // 删除列表
+      document.getElementById('delete-list').addEventListener('click', () => {
+        const project = appState.projects.find(p => p.id === appState.currentProjectId);
+        if (!project) return;
+        
+        const list = project.lists.find(l => l.id === appState.currentListId);
+        if (!list) return;
+        
+        if (confirm(`确定要删除列表"${list.name}"吗？此操作将删除列表中的所有任务。`)) {
+          const listIndex = project.lists.findIndex(l => l.id === appState.currentListId);
+          project.lists.splice(listIndex, 1);
+          
+          saveData();
+          renderKanban();
+          renderDashboard();
+          renderGantt();
+          updateProjectStats();
+        }
+        
+        document.getElementById('list-settings-dropdown').classList.add('hidden');
+      });
+      
+      // 删除任务
+      document.getElementById('delete-task-btn').addEventListener('click', () => {
+        if (!appState.currentTaskId) return;
+        
+        const task = getTaskById(appState.currentTaskId);
+        if (!task) return;
+        
+        if (confirm(`确定要删除任务"${task.title}"吗？`)) {
+          const project = appState.projects.find(p => p.id === appState.currentProjectId);
+          if (!project) return;
+          
+          // 找到任务所在的列表并删除
+          for (const list of project.lists) {
+            const taskIndex = list.tasks.findIndex(t => t.id === appState.currentTaskId);
+            if (taskIndex !== -1) {
+              list.tasks.splice(taskIndex, 1);
+              break;
+            }
+          }
+          
+          saveData();
+          renderKanban();
+          renderDashboard();
+          renderGantt();
+          updateProjectStats();
+          closeAllModals();
+        }
+      });
+      
+      // 复制任务
+      document.getElementById('duplicate-task-btn').addEventListener('click', () => {
+        if (!appState.currentTaskId) return;
+        
+        const task = getTaskById(appState.currentTaskId);
+        if (!task) return;
+        
+        const project = appState.projects.find(p => p.id === appState.currentProjectId);
+        if (!project) return;
+        
+        // 找到任务所在的列表
+        let taskList = null;
+        for (const list of project.lists) {
+          const foundTask = list.tasks.find(t => t.id === appState.currentTaskId);
+          if (foundTask) {
+            taskList = list;
+            break;
+          }
+        }
+        
+        if (!taskList) return;
+        
+        // 创建任务副本
+        const duplicatedTask = {
+          ...task,
+          id: generateId(),
+          title: `${task.title} (副本)`,
+          createdAt: new Date().toISOString(),
+          completedAt: null // 重置完成状态
+        };
+        
+        taskList.tasks.push(duplicatedTask);
+        saveData();
+        renderKanban();
+        renderDashboard();
+        renderGantt();
+        updateProjectStats();
+        closeAllModals();
+      });
+      
+      // 甘特图缩放控制
+      document.getElementById('zoom-in-gantt').addEventListener('click', () => {
+        if (appState.ganttZoom < 2) {
+          appState.ganttZoom += 0.25;
+          renderGantt();
+        }
+      });
+      
+      document.getElementById('zoom-out-gantt').addEventListener('click', () => {
+        if (appState.ganttZoom > 0.5) {
+          appState.ganttZoom -= 0.25;
+          renderGantt();
+        }
+      });
+      
+      document.getElementById('fit-gantt').addEventListener('click', () => {
+        appState.ganttZoom = 1;
+        renderGantt();
+      });
+      
+      // 关闭模态框按钮
+      document.querySelectorAll('.modal-close').forEach(btn => {
+        btn.addEventListener('click', closeAllModals);
+        btn.addEventListener('click', closeAllModals);
+      });
+      
+      // 点击模态框背景关闭
+      document.querySelectorAll('[id$="-modal"]').forEach(modal => {
+        modal.addEventListener('click', (e) => {
+          if (e.target === modal) {
+            closeAllModals();
+          }
+        });
+      });
+    }
+    
+    // 初始化应用
+    document.addEventListener('DOMContentLoaded', initApp);
+  </script>
+</body>
+</html>
